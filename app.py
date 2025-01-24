@@ -1,16 +1,18 @@
-
 import streamlit as st
 from elasticsearch import Elasticsearch
 
-# Connect to Elasticsearch
+# Elasticsearch URL'sini Streamlit Secrets'ten al
+ELASTICSEARCH_URL = st.secrets["ELASTICSEARCH_URL"]
+
+# Elasticsearch'e bağlan
 es = Elasticsearch(
-    "http://193.164.4.35:9200",
+    ELASTICSEARCH_URL,
     request_timeout=120,
     max_retries=10,
     retry_on_timeout=True
 )
 
-# Test connection
+# Elasticsearch bağlantısını test et
 try:
     if not es.ping():
         st.error("Elasticsearch server is not reachable. Please check the server URL and network settings.")
@@ -22,14 +24,14 @@ except Exception as e:
 # Streamlit UI
 st.title("Elasticsearch Leaks Viewer")
 
-# Query input
+# Sorgu girişi
 query = st.text_input("Search Query (Use wildcard: *bilkent*):", "")
-batch_size = 5000  # Number of results to fetch per batch
+batch_size = 5000  # Kaç sonuç çekileceği
 search_button = st.button("Search")
 next_button = st.button("Load More Results")
 download_button = st.button("Download All Results")
 
-# Initialize session state
+# Session State ile kontrol
 if "scroll_id" not in st.session_state:
     st.session_state.scroll_id = None
 if "all_results" not in st.session_state:
@@ -39,11 +41,11 @@ if "total_results" not in st.session_state:
 if "current_batch" not in st.session_state:
     st.session_state.current_batch = []
 
-# Function to fetch results from Elasticsearch
+# Sonuçları Elasticsearch'ten çekmek için fonksiyon
 def fetch_results():
     try:
         if st.session_state.scroll_id is None:
-            # Initial search query
+            # İlk arama sorgusu
             search_query = {
                 "query": {
                     "wildcard": {
@@ -53,16 +55,16 @@ def fetch_results():
                         }
                     }
                 },
-                "_source": ["content"],  # Fetch only 'content' field
+                "_source": ["content"],  # Sadece 'content' alanı çekiliyor
                 "size": batch_size
             }
             response = es.search(index="leaks", body=search_query, scroll="5m")
             st.session_state.scroll_id = response["_scroll_id"]
         else:
-            # Fetch next batch using scroll
+            # Scroll ID ile sonraki batch çekiliyor
             response = es.scroll(scroll_id=st.session_state.scroll_id, scroll="5m")
 
-        # Process hits
+        # Gelen sonuçları işleme
         hits = response["hits"]["hits"]
         if hits:
             batch = [hit["_source"]["content"] for hit in hits]
@@ -71,19 +73,19 @@ def fetch_results():
             st.session_state.total_results += len(batch)
         else:
             st.session_state.current_batch = []
-            st.session_state.scroll_id = None  # Clear scroll ID if no more results
+            st.session_state.scroll_id = None  # Sonuç kalmadıysa scroll ID temizle
     except Exception as e:
         st.error(f"Error during fetching results: {e}")
         st.session_state.scroll_id = None
 
-# Search and display results
+# Arama ve sonuçları görüntüleme
 if search_button:
     if not query.strip():
         st.error("Please enter a search query.")
     else:
-        st.session_state.scroll_id = None  # Reset scroll ID for new query
-        st.session_state.all_results = []  # Clear previous results
-        st.session_state.total_results = 0  # Reset total result count
+        st.session_state.scroll_id = None  # Yeni sorgu için scroll ID sıfırla
+        st.session_state.all_results = []  # Önceki sonuçları temizle
+        st.session_state.total_results = 0  # Toplam sonucu sıfırla
         fetch_results()
         if st.session_state.current_batch:
             st.success(f"Total Results Found: {st.session_state.total_results}")
@@ -93,7 +95,7 @@ if search_button:
         else:
             st.warning("No results found.")
 
-# Load more results
+# Daha fazla sonuç yükleme
 if next_button and st.session_state.scroll_id:
     fetch_results()
     if st.session_state.current_batch:
@@ -103,10 +105,10 @@ if next_button and st.session_state.scroll_id:
     else:
         st.warning("No more results available.")
 
-# Download all results
+# Tüm sonuçları indirme
 if download_button:
     if st.session_state.all_results:
-        # Prepare text file content
+        # Text dosyasını hazırla
         txt_content = "\n".join(st.session_state.all_results)
         st.download_button(
             label="Download Results as .txt",
