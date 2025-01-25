@@ -50,26 +50,27 @@ index_name = f"leaks-{today_date}"
 def fetch_results():
     try:
         if st.session_state.scroll_id is None:
-            # İlk arama sorgusu
+            # Case-insensitive exact match query
             search_query = {
                 "query": {
-                    "wildcard": {
+                    "match": {
                         "content": {
-                            "value": f"*{query}*",
-                            "case_insensitive": True
+                            "query": query,
+                            "operator": "and",
+                            "fuzziness": "0",  # Ensures exact match
                         }
                     }
                 },
-                "_source": ["content"],  # Sadece 'content' alanı çekiliyor
+                "_source": ["content"],  # Only fetch the 'content' field
                 "size": batch_size
             }
             response = es.search(index=index_name, body=search_query, scroll="5m")
             st.session_state.scroll_id = response["_scroll_id"]
         else:
-            # Scroll ID ile sonraki batch çekiliyor
+            # Scroll ID for fetching the next batch
             response = es.scroll(scroll_id=st.session_state.scroll_id, scroll="5m")
 
-        # Gelen sonuçları işleme
+        # Process the results
         hits = response["hits"]["hits"]
         if hits:
             batch = [hit["_source"]["content"] for hit in hits]
@@ -78,7 +79,7 @@ def fetch_results():
             st.session_state.total_results += len(batch)
         else:
             st.session_state.current_batch = []
-            st.session_state.scroll_id = None  # Sonuç kalmadıysa scroll ID temizle
+            st.session_state.scroll_id = None  # Clear scroll ID if no more results
     except Exception as e:
         st.error(f"Error during fetching results: {e}")
         st.session_state.scroll_id = None
