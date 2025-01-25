@@ -26,10 +26,9 @@ except Exception as e:
 st.title("Elasticsearch Leaks Viewer")
 
 # Sorgu girişi
-query = st.text_input("Search Query (Use wildcard: *bilkent*):", "")
-batch_size = 5000  # Kaç sonuç çekileceği
+query = st.text_input("Search Query (Exact Match):", "")
+batch_size = 5000  # Scroll API ile her seferinde çekilecek sonuç sayısı
 search_button = st.button("Search")
-next_button = st.button("Load More Results")
 download_button = st.button("Download All Results")
 
 # Session State ile kontrol
@@ -41,6 +40,8 @@ if "total_results" not in st.session_state:
     st.session_state.total_results = 0
 if "current_batch" not in st.session_state:
     st.session_state.current_batch = []
+if "search_in_progress" not in st.session_state:
+    st.session_state.search_in_progress = False
 
 # Elasticsearch'teki bugünkü indeks adını hesaplama
 today_date = datetime.now().strftime("%Y-%m-%d")
@@ -49,67 +50,78 @@ index_name = f"leaks-{today_date}"
 # Sonuçları Elasticsearch'ten çekmek için fonksiyon
 def fetch_results():
     try:
-        if st.session_state.scroll_id is None:
-            # Case-insensitive exact match query
-            search_query = {
-                "query": {
-                    "match": {
-                        "content": {
-                            "query": query,
-                            "operator": "and",
-                            "fuzziness": "0",  # Ensures exact match
+        st.session_state.search_in_progress = True  # Arama başladı
+        while True:
+            if st.session_state.scroll_id is None:
+                # İlk sorgu
+                search_query = {
+                    "query": {
+                        "query_string": {
+                            "query": f"*{query}*",  # wildcard destekli sorgu
+                            "default_field": "content",
+                            "analyze_wildcard": True
                         }
-                    }
-                },
-                "_source": ["content"],  # Only fetch the 'content' field
-                "size": batch_size
-            }
-            response = es.search(index=index_name, body=search_query, scroll="5m")
-            st.session_state.scroll_id = response["_scroll_id"]
-        else:
-            # Scroll ID for fetching the next batch
-            response = es.scroll(scroll_id=st.session_state.scroll_id, scroll="5m")
+                    },
+                    "_source": ["content"],  # Sadece 'content' alanı çekiliyor
+                    "size": batch_size
+                }
+                response = es.search(index=index_name, body=search_query, scroll="5m")
+                st.session_state.scroll_id = response["_scroll_id"]
+            else:
+                # Scroll ID ile sonraki batch çekiliyor
+                response = es.scroll(scroll_id=st.session_state.scroll_id, scroll="5m")
 
-        # Process the results
-        hits = response["hits"]["hits"]
-        if hits:
+            # Gelen sonuçları işleme
+            hits = response["hits"]["hits"]
+            if not hits:
+                st.session_state.scroll_id = None  # Sonuç kalmadıysa scroll ID temizle
+                break
+
+            # Sonuçları toplama
             batch = [hit["_source"]["content"] for hit in hits]
             st.session_state.current_batch = batch
             st.session_state.all_results.extend(batch)
             st.session_state.total_results += len(batch)
-        else:
-            st.session_state.current_batch = []
-            st.session_state.scroll_id = None  # Clear scroll ID if no more results
+
+            # Gerçek zamanlı olarak sonuçları ekrana yazdırma
+            st.write(f"Fetched {st.session_state.total_results} results so far...")
+            with st.expander("Real-Time Results", expanded=True):
+                for i, content in enumerate(batch, start=st.session_state.total_results - len(batch) + 1):
+                    st.text(f"{i}: {content}")
+
     except Exception as e:
         st.error(f"Error during fetching results: {e}")
         st.session_state.scroll_id = None
+    finally:
+        st.session_state.search_in_progress = False  # Arama tamamlandı
 
-# Arama ve sonuçları görüntüleme
+# Durum göstergesi için ayrı bir alan
+status_placeholder = st.empty()
+
+# Arama başlatıldığında
 if search_button:
     if not query.strip():
         st.error("Please enter a search query.")
     else:
-        st.session_state.scroll_id = None  # Yeni sorgu için scroll ID sıfırla
-        st.session_state.all_results = []  # Önceki sonuçları temizle
-        st.session_state.total_results = 0  # Toplam sonucu sıfırla
-        fetch_results()
-        if st.session_state.current_batch:
-            st.success(f"Total Results Found: {st.session_state.total_results}")
-            st.write("### Current Results:")
-            for i, content in enumerate(st.session_state.current_batch, start=1):
-                st.text(f"{i}: {content}")
-        else:
-            st.warning("No results found.")
+        # Önceki sonuçları temizle
+        st.session_state.scroll_id = None
+        st.session_state.all_results = []
+        st.session_state.total_results = 0
 
-# Daha fazla sonuç yükleme
-if next_button and st.session_state.scroll_id:
-    fetch_results()
-    if st.session_state.current_batch:
-        st.write("### More Results:")
-        for i, content in enumerate(st.session_state.current_batch, start=st.session_state.total_results - len(st.session_state.current_batch) + 1):
-            st.text(f"{i}: {content}")
-    else:
-        st.warning("No more results available.")
+        # Durum kutusu: Kırmızı (Fetching)
+        status_placeholder.error("Fetching in progress... Please wait.")
+
+        fetch_results()
+
+        # Durum kutusu: Yeşil (All results fetched)
+        if st.session_state.all_results:
+            status_placeholder.success(f"All results fetched successfully! Total Results Found: {st.session_state.total_results}")
+            st.write("### Final Results:")
+            with st.expander("All Results", expanded=True):
+                for i, content in enumerate(st.session_state.all_results, start=1):
+                    st.text(f"{i}: {content}")
+        else:
+            status_placeholder.error("No results found.")
 
 # Tüm sonuçları indirme
 if download_button:
