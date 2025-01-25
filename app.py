@@ -1,5 +1,6 @@
 import streamlit as st
 from elasticsearch import Elasticsearch
+from datetime import datetime
 
 # Elasticsearch URL'sini Streamlit Secrets'ten al
 ELASTICSEARCH_URL = st.secrets["ELASTICSEARCH_URL"]
@@ -41,6 +42,10 @@ if "total_results" not in st.session_state:
 if "current_batch" not in st.session_state:
     st.session_state.current_batch = []
 
+# Elasticsearch'teki bugünkü indeks adını hesaplama
+today_date = datetime.now().strftime("%Y-%m-%d")
+index_name = f"leaks-{today_date}"
+
 # Sonuçları Elasticsearch'ten çekmek için fonksiyon
 def fetch_results():
     try:
@@ -58,7 +63,7 @@ def fetch_results():
                 "_source": ["content"],  # Sadece 'content' alanı çekiliyor
                 "size": batch_size
             }
-            response = es.search(index="leaks", body=search_query, scroll="5m")
+            response = es.search(index=index_name, body=search_query, scroll="5m")
             st.session_state.scroll_id = response["_scroll_id"]
         else:
             # Scroll ID ile sonraki batch çekiliyor
@@ -113,7 +118,7 @@ if download_button:
         st.download_button(
             label="Download Results as .txt",
             data=txt_content,
-            file_name="search_results.txt",
+            file_name=f"search_results_{today_date}.txt",
             mime="text/plain"
         )
     else:
