@@ -38,29 +38,7 @@ if "current_page" not in st.session_state:
 query = st.text_input("Search Query (Exact Match):", "")
 batch_size = 10000
 
-# -- Get Indices for Last Week --
-def get_last_week_indices():
-    today_date = datetime.now()
-    last_week_dates = [
-        (today_date - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)
-    ]
-    
-    try:
-        all_indices = es.indices.get_alias(index="*")
-        existing_indices = [
-            f"leaks-{date}" for date in last_week_dates if f"leaks-{date}" in all_indices
-        ]
-        return existing_indices
-    except Exception as e:
-        st.error(f"Error fetching indices: {e}")
-        return []
-
-existing_indices = get_last_week_indices()
-if not existing_indices:
-    st.error("No indices found for the past week. Please check your Elasticsearch setup or index names.")
-    st.stop()
-
-index_names = ",".join(existing_indices)
+index_names = "leaks-*"
 
 # -- Fetch Results Function --
 def fetch_results():
