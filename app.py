@@ -14,6 +14,8 @@ es = Elasticsearch(
     request_timeout=120,
     max_retries=10,
     retry_on_timeout=True
+    verify_certs=True,  # SSL sertifikasını doğrula
+    ca_certs="C:/Users/Administrator/Desktop/leak/elasticsearch-8.17.1/config/ca.crt"
 )
 
 # Test connection
