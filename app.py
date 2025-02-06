@@ -20,96 +20,102 @@ if "page_size" not in st.session_state:
 # -- Query Input --
 query = st.text_input("Search Query (Exact Match):", "")
 
-# -- Standart Sayfalı Sonuçları Çekmek İçin Fonksiyon --
-def fetch_results():
-    if not query.strip():
-        st.error("Lütfen bir arama sorgusu girin.")
-        return
-
+def fetch_all_pages(query: str):
+    """
+    Belirtilen query için API'den tüm sayfaları çekip döndürür.
+    Return:
+        all_results (list): Toplam tüm sayfalardaki sonuçların listesi.
+        total_results (int): Toplam sonuç sayısı.
+        page_size (int): Bir sayfadaki sonuç adedi.
+    """
     try:
-        response = requests.get(FLASK_API_URL, params={"q": query, "page": st.session_state.current_page})
-        if response.status_code == 200:
-            data = response.json()
-            if "results" in data:
-                st.session_state.all_results = data["results"]
-                st.session_state.total_results = data["total_results"]
-                st.session_state.page_size = data["page_size"]
-                st.success(f"Toplam Sonuç Sayısı: {st.session_state.total_results}")
-            else:
-                st.error("Beklenmeyen cevap formatı.")
-        else:
-            st.error(f"Hata: {response.status_code} - {response.text}")
+        # 1) İlk sayfayı çek
+        page = 1
+        response = requests.get(FLASK_API_URL, params={"q": query, "page": page})
+        if response.status_code != 200:
+            st.error(f"Error: {response.status_code} - {response.text}")
+            return [], 0, 100
+
+        data = response.json()
+        if "results" not in data:
+            st.error("Unexpected response format.")
+            return [], 0, 100
+
+        # İlk sayfa sonuçlarını al
+        all_results = data["results"]
+        total_results = data["total_results"]
+        page_size = data["page_size"]
+
+        # Toplam sayfa sayısını hesapla
+        total_pages = (total_results // page_size) + (1 if total_results % page_size != 0 else 0)
+
+        # 2) Kalan sayfaları döngüyle çek
+        for p in range(2, total_pages + 1):
+            resp = requests.get(FLASK_API_URL, params={"q": query, "page": p})
+            if resp.status_code != 200:
+                st.error(f"Error on page {p}: {resp.status_code} - {resp.text}")
+                break
+            d = resp.json()
+            if "results" not in d:
+                st.error(f"Unexpected response format on page {p}.")
+                break
+            all_results.extend(d["results"])
+
+        return all_results, total_results, page_size
+
     except Exception as e:
-        st.error(f"Sonuçlar çekilirken hata oluştu: {e}")
+        st.error(f"Error fetching all results: {e}")
+        return [], 0, 100
 
-# -- Arama Butonu --
+# -- Search Button --
 if st.button("Search"):
-    st.session_state.current_page = 1  # Yeni arama yapıldığında sayfa sıfırlansın
-    fetch_results()
+    # Yeni arama yapıldığında sayfa sıfırlansın
+    st.session_state.current_page = 1
 
-# -- Sayfalama Kontrolleri --
-total_pages = (st.session_state.total_results // st.session_state.page_size) + (1 if st.session_state.total_results % st.session_state.page_size != 0 else 0)
+    # Tüm sayfaları tek seferde toplayalım
+    if not query.strip():
+        st.error("Please enter a search query.")
+    else:
+        all_results, total_results, page_size = fetch_all_pages(query)
+        st.session_state.all_results = all_results
+        st.session_state.total_results = total_results
+        st.session_state.page_size = page_size
 
+        st.success(f"Toplam Sonuç: {total_results}")
+
+# -- Toplam sayfa sayısı (lokal bellekten hesaplıyoruz) --
+total_pages = 0
+if st.session_state.total_results > 0 and st.session_state.page_size > 0:
+    total_pages = (st.session_state.total_results // st.session_state.page_size) + (
+        1 if st.session_state.total_results % st.session_state.page_size != 0 else 0
+    )
+
+# -- Pagination Controls --
 col1, col2, col3 = st.columns([1, 1, 1])
 with col1:
     if st.button("Previous") and st.session_state.current_page > 1:
         st.session_state.current_page -= 1
-        fetch_results()
 with col3:
     if st.button("Next") and st.session_state.current_page < total_pages:
         st.session_state.current_page += 1
-        fetch_results()
 
-st.write(f"Showing page {st.session_state.current_page} of {total_pages}")
+st.write(f"Showing page {st.session_state.current_page} of {total_pages if total_pages else 1}")
 
-# -- Standart Sayfadaki Sonuçların Gösterimi --
+# -- Display Results (yalnızca ilgili sayfadaki slice gösterilir) --
 if st.session_state.all_results:
-    start_index = (st.session_state.current_page - 1) * st.session_state.page_size + 1
-    for i, content in enumerate(st.session_state.all_results, start=start_index):
+    start_idx = (st.session_state.current_page - 1) * st.session_state.page_size
+    end_idx = start_idx + st.session_state.page_size
+    page_results = st.session_state.all_results[start_idx:end_idx]
+
+    for i, content in enumerate(page_results, start=start_idx + 1):
         st.text(f"{i}: {content}")
 
-# -- Scroll API Kullanarak Tüm Sonuçları Çekmek İçin Fonksiyon --
-def fetch_all_results_scroll():
-    all_results = []
-    try:
-        # Scroll oturumunu başlatmak için ilk istek
-        response = requests.get(FLASK_API_URL, params={"q": query, "scroll": "true"})
-        if response.status_code != 200:
-            st.error(f"Scroll başlatılırken hata: {response.status_code} - {response.text}")
-            return all_results
-        
-        data = response.json()
-        results = data.get("results", [])
-        all_results.extend(results)
-        scroll_id = data.get("scroll_id")
-        
-        # Scroll ile kalan sonuçları çekmek için döngü
-        while True:
-            # scroll_id parametresi ile sonraki veri parçasını çekiyoruz
-            response = requests.get(FLASK_API_URL, params={"scroll_id": scroll_id, "scroll": "true"})
-            if response.status_code != 200:
-                st.error(f"Scroll devam ederken hata: {response.status_code} - {response.text}")
-                break
-            data = response.json()
-            results = data.get("results", [])
-            if not results:
-                break  # Sonuç kalmadıysa döngüden çık
-            all_results.extend(results)
-            scroll_id = data.get("scroll_id")
-        return all_results
-    except Exception as e:
-        st.error(f"Scroll sonuçları çekilirken hata oluştu: {e}")
-        return all_results
-
-# -- Scroll API Tabanlı Tüm Sonuçları İndirme Butonu --
-if st.session_state.total_results > 0:
-    if st.button("Download All Results (Scroll API)"):
-        full_results = fetch_all_results_scroll()
-        if full_results:
-            txt_content = "\n".join(full_results)
-            st.download_button(
-                label="Download Complete Results",
-                data=txt_content,
-                file_name=f"search_results_all_{datetime.now().strftime('%Y-%m-%d')}.txt",
-                mime="text/plain"
-            )
+# -- Download Button (Tüm sonuçlar) --
+if st.session_state.all_results:
+    txt_content = "\n".join(st.session_state.all_results)
+    st.download_button(
+        label="Download All Results",
+        data=txt_content,
+        file_name=f"search_results_{datetime.now().strftime('%Y-%m-%d')}.txt",
+        mime="text/plain"
+    )
