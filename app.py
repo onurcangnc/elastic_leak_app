@@ -4,18 +4,14 @@ from datetime import datetime, timedelta
 
 # Elasticsearch URL
 ELASTICSEARCH_URL = st.secrets["ELASTICSEARCH_URL"]
-USERNAME = st.secrets["ELASTICSEARCH_USER"]
-PASSWORD = st.secrets["ELASTICSEARCH_PASSWORD"]
 
 # Connect to Elasticsearch
 es = Elasticsearch(
     [ELASTICSEARCH_URL],
-    basic_auth=(USERNAME, PASSWORD),
     request_timeout=120,
     max_retries=10,
     retry_on_timeout=True,
-    verify_certs=True,  # SSL sertifikasını doğrula
-    ca_certs="C:/Users/Administrator/Desktop/leak/elasticsearch-8.17.1/config/ca.crt"
+    verify_certs=False
 )
 
 # Test connection
