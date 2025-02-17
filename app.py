@@ -1,9 +1,34 @@
 import streamlit as st
 import requests
+import threading
+import time
 from datetime import datetime
 
 # Flask API URL (Elasticsearch'e bağlanan ara sunucu)
 FLASK_API_URL = st.secrets["FLASK_API_URL"]
+
+# Streamlit Keep-Alive URL (Kendi Uygulamanın URL'sini Buraya Yaz)
+STREAMLIT_APP_URL = st.secrets["STREAMLIT_APP_URL"]
+
+# ✅ Keep-Alive Fonksiyonu (Streamlit Uygulamasına Kendisi Ping Atar)
+def keep_alive():
+    while True:
+        try:
+            response = requests.get(STREAMLIT_APP_URL)
+            if response.status_code == 200:
+                print("✅ Keep-Alive başarılı! Streamlit uygulaması aktif.")
+            else:
+                print(f"⚠️ Keep-Alive hatası: {response.status_code}")
+        except Exception as e:
+            print(f"🚨 Bağlantı hatası: {e}")
+        
+        time.sleep(300)  # 5 dakikada bir ping at
+
+# ✅ Streamlit başlatılırken Keep-Alive Thread başlat
+if "keep_alive_thread" not in st.session_state:
+    keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+    keep_alive_thread.start()
+    st.session_state["keep_alive_thread"] = True
 
 st.title("Elasticsearch Leaks Viewer")
 
