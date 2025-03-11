@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import math
 
-FLASK_API_URL = "http://localhost:5000/search"  # Örnek
+FLASK_API_URL = st.secrets["FLASK_API_URL"]  # Örnek
 
 # State başlangıç
 if "all_results" not in st.session_state:
@@ -43,7 +43,7 @@ def fetch_all_pages(query):
         st.session_state.all_results.extend(next_page_data["results"])
         # Burada isterseniz st.experimental_rerun() ile ekrana anlık yansıtabilirsiniz
 
-st.title("Auto-Fetch Paginated Results")
+st.title("Elastic Leak Searcher")
 
 query = st.text_input("Search Query:", "")
 
