@@ -1,96 +1,83 @@
-import logging
-import sys
-from flask import Flask, request, jsonify
-from elasticsearch import Elasticsearch
+import streamlit as st
+import requests
 
-app = Flask(__name__)
+FLASK_API_URL = st.secrets["FLASK_API_URL"]
 
-# Elasticsearch Bağlantısı
-ELASTICSEARCH_URL = "http://localhost:9200"
-es = Elasticsearch(
-    [ELASTICSEARCH_URL],
-    verify_certs=False,
-    request_timeout=360,  # Uzun sorgular için arttırılmış timeout
-    max_retries=10,
-    retry_on_timeout=True
-)
+st.title("Elasticsearch Leaks Viewer")
 
-# Loglama Ayarları: sadece konsola yazma
-logging.basicConfig(
-    level=logging.INFO,  # Dosyaya yazmak için 'filename' parametresi kaldırıldı
-    format="%(asctime)s - %(levelname)s - [%(message)s]"
-)
+# ✅ İlk başta session state içeriği sıfır olsun
+if "all_results" not in st.session_state:
+    st.session_state.all_results = []
+if "current_page" not in st.session_state:
+    st.session_state.current_page = 1
+if "total_results" not in st.session_state:
+    st.session_state.total_results = 0
+if "page_size" not in st.session_state:
+    st.session_state.page_size = 100
 
-# Konsola yazan bir stream handler ekliyoruz.
-console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setLevel(logging.INFO)
-formatter = logging.Formatter("%(asctime)s - %(levelname)s - [%(message)s]")
-console_handler.setFormatter(formatter)
-logging.getLogger("").addHandler(console_handler)
+query = st.text_input("Search Query (Exact Match):", "")
 
-@app.route("/search", methods=["GET"])
-def search():
-    query = request.args.get("q")
-    page_size = 10000
-    search_after = request.args.getlist("search_after")
+def fetch_results():
+    """Elasticsearch'ten veriyi getirip bellekte saklayan fonksiyon"""
+    if not query.strip():
+        st.error("Please enter a search query.")
+        return
 
-    if not query:
-        logging.info("Received search request without query parameter.")
-        return jsonify({"error": "Query parameter is required"}), 400
-
-    logging.info("Received search query: %s", query)
-
+    params = {"q": query}
+    
     try:
-        # Wildcard sorgusu ile "content.keyword" üzerinde arama yapıyoruz
-        search_query = {
-            "query": {
-                "wildcard": {
-                    "content.keyword": {
-                        "value": f"*{query}*"
-                    }
-                }
-            },
-            "size": page_size,
-            "sort": [{"line_number": "asc"}]
-        }
+        response = requests.get(FLASK_API_URL, params=params)
+        if response.status_code == 200:
+            data = response.json()
 
-        if search_after:
-            search_query["search_after"] = search_after
-
-        logging.info("Executing search query: %s", search_query)
-        result = es.search(
-            index="leaks,leaks-*",
-            body=search_query,
-            _source=["content", "line_number"]
-        )
-
-        hits = result["hits"]["hits"]
-        next_search_after = hits[-1]["sort"] if hits else None
-
-        response_data = {
-            "results": [hit["_source"]["content"] for hit in hits if "_source" in hit],
-            "total_results": result["hits"]["total"]["value"],
-            "search_after": next_search_after
-        }
-
-        logging.info("Search completed. Total results: %s", response_data["total_results"])
-        return jsonify(response_data)
+            if "results" in data:
+                st.session_state.all_results = data["results"]  # ✅ Tüm veriyi belleğe kaydet
+                st.session_state.total_results = data["total_results"]
+                st.session_state.page_size = data.get("page_size", 100)
+                st.session_state.current_page = 1  # ✅ Sayfa sıfırlansın
+                st.success(f"Total Results Found: {st.session_state.total_results}")
+            else:
+                st.error("Unexpected response format.")
+        else:
+            st.error(f"Error: {response.status_code} - {response.text}")
 
     except Exception as e:
-        logging.error("Error during search: %s", str(e))
-        return jsonify({"error": str(e)}), 500
+        st.error(f"Error fetching results: {e}")
 
-@app.route("/health", methods=["GET"])
-def health_check():
-    try:
-        if es.ping():
-            return jsonify({"status": "Elasticsearch is running"}), 200
-        return jsonify({"status": "Elasticsearch is down"}), 500
-    except Exception as e:
-        logging.error("Health Check Failed: %s", str(e))
-        return jsonify({"status": "Error", "message": str(e)}), 500
+if st.button("Search"):
+    st.session_state.all_results = []  # ✅ Yeni arama yapıldığında sonuçları sıfırla
+    fetch_results()
 
-if __name__ == "__main__":
-    # 0.0.0.0 ile tüm arayüzlerden erişilebilir,
-    # gerekliyse sadece localhost (127.0.0.1) kullanılabilir.
-    app.run(host="0.0.0.0", port=5000)
+# ✅ Sayfalama için toplam sayfa hesapla
+total_pages = (len(st.session_state.all_results) // st.session_state.page_size) + (
+    1 if len(st.session_state.all_results) % st.session_state.page_size != 0 else 0
+)
+
+col1, col2 = st.columns([1, 1])
+with col1:
+    if st.button("Previous") and st.session_state.current_page > 1:
+        st.session_state.current_page -= 1
+with col2:
+    if st.button("Next") and st.session_state.current_page < total_pages:
+        st.session_state.current_page += 1
+
+st.write(f"Showing page {st.session_state.current_page} of {total_pages}")
+
+# ✅ Şu anki sayfadaki verileri göster
+start_idx = (st.session_state.current_page - 1) * st.session_state.page_size
+end_idx = start_idx + st.session_state.page_size
+page_data = st.session_state.all_results[start_idx:end_idx]
+
+if page_data:
+    for i, content in enumerate(page_data, start=start_idx + 1):
+        st.text(f"{i}: {content}")
+
+# ✅ Tüm sonuçları indir
+if st.session_state.all_results:
+    txt_content = "\n".join(st.session_state.all_results)
+    st.download_button(
+        label="Download All Results",
+        data=txt_content,
+        file_name=f"search_results.txt",
+        mime="text/plain"
+    )
