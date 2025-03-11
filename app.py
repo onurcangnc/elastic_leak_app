@@ -30,18 +30,19 @@ def fetch_page(query, page_number, page_size=100):
     return r.json()  # Expected: {"results": [...], "total_results": N}
 
 def fetch_all_pages(query):
-    """ Tüm sayfaları (sonuna kadar) otomatik çek. """
     first_page_data = fetch_page(query, 1, st.session_state.page_size)
     st.session_state.all_results.extend(first_page_data["results"])
     st.session_state.total_results = first_page_data["total_results"]
 
     total_pages = math.ceil(first_page_data["total_results"] / st.session_state.page_size)
 
-    # Kalan sayfaları ardışık çek
+    # İlk part geldi, ekrana yansıtalım
+    st.experimental_rerun()
+
     for p in range(2, total_pages + 1):
         next_page_data = fetch_page(query, p, st.session_state.page_size)
         st.session_state.all_results.extend(next_page_data["results"])
-        # Burada isterseniz st.experimental_rerun() ile ekrana anlık yansıtabilirsiniz
+        st.experimental_rerun()
 
 st.title("Elastic Leak Searcher")
 
