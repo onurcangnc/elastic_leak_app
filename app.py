@@ -1,11 +1,10 @@
 import streamlit as st
 import requests
+import math
 
-FLASK_API_URL = st.secrets["FLASK_API_URL"]
+FLASK_API_URL = "http://localhost:5000/search"  # Örnek
 
-st.title("Elasticsearch Leaks Viewer")
-
-# ✅ İlk başta session state içeriği sıfır olsun
+# State başlangıç
 if "all_results" not in st.session_state:
     st.session_state.all_results = []
 if "current_page" not in st.session_state:
@@ -14,70 +13,77 @@ if "total_results" not in st.session_state:
     st.session_state.total_results = 0
 if "page_size" not in st.session_state:
     st.session_state.page_size = 100
+if "data_fetched" not in st.session_state:
+    st.session_state.data_fetched = False
 
-query = st.text_input("Search Query (Exact Match):", "")
+def fetch_page(query, page_number, page_size=100):
+    """ Örnek sayfa çekme fonksiyonu (size, offset mantığı).
+        Arka planda Flask API'niz de search_after kullanabilir.
+    """
+    params = {
+        "q": query,
+        "page_size": page_size,
+        "page_number": page_number
+    }
+    r = requests.get(FLASK_API_URL, params=params)
+    r.raise_for_status()
+    return r.json()  # Expected: {"results": [...], "total_results": N}
 
-def fetch_results():
-    """Elasticsearch'ten veriyi getirip bellekte saklayan fonksiyon"""
-    if not query.strip():
-        st.error("Please enter a search query.")
-        return
+def fetch_all_pages(query):
+    """ Tüm sayfaları (sonuna kadar) otomatik çek. """
+    first_page_data = fetch_page(query, 1, st.session_state.page_size)
+    st.session_state.all_results.extend(first_page_data["results"])
+    st.session_state.total_results = first_page_data["total_results"]
 
-    params = {"q": query}
-    
-    try:
-        response = requests.get(FLASK_API_URL, params=params)
-        if response.status_code == 200:
-            data = response.json()
+    total_pages = math.ceil(first_page_data["total_results"] / st.session_state.page_size)
 
-            if "results" in data:
-                st.session_state.all_results = data["results"]  # ✅ Tüm veriyi belleğe kaydet
-                st.session_state.total_results = data["total_results"]
-                st.session_state.page_size = data.get("page_size", 100)
-                st.session_state.current_page = 1  # ✅ Sayfa sıfırlansın
-                st.success(f"Total Results Found: {st.session_state.total_results}")
-            else:
-                st.error("Unexpected response format.")
-        else:
-            st.error(f"Error: {response.status_code} - {response.text}")
+    # Kalan sayfaları ardışık çek
+    for p in range(2, total_pages + 1):
+        next_page_data = fetch_page(query, p, st.session_state.page_size)
+        st.session_state.all_results.extend(next_page_data["results"])
+        # Burada isterseniz st.experimental_rerun() ile ekrana anlık yansıtabilirsiniz
 
-    except Exception as e:
-        st.error(f"Error fetching results: {e}")
+st.title("Auto-Fetch Paginated Results")
+
+query = st.text_input("Search Query:", "")
 
 if st.button("Search"):
-    st.session_state.all_results = []  # ✅ Yeni arama yapıldığında sonuçları sıfırla
-    fetch_results()
+    st.session_state.all_results = []
+    st.session_state.current_page = 1
+    st.session_state.total_results = 0
+    st.session_state.data_fetched = False
 
-# ✅ Sayfalama için toplam sayfa hesapla
-total_pages = (len(st.session_state.all_results) // st.session_state.page_size) + (
-    1 if len(st.session_state.all_results) % st.session_state.page_size != 0 else 0
-)
+    if query.strip():
+        try:
+            fetch_all_pages(query)
+            st.session_state.data_fetched = True
+        except Exception as e:
+            st.error(f"Error: {e}")
 
-col1, col2 = st.columns([1, 1])
-with col1:
-    if st.button("Previous") and st.session_state.current_page > 1:
-        st.session_state.current_page -= 1
-with col2:
-    if st.button("Next") and st.session_state.current_page < total_pages:
-        st.session_state.current_page += 1
+# Eğer veriler çekildiyse, sayfalama göster
+if st.session_state.data_fetched and st.session_state.total_results > 0:
+    total_pages = math.ceil(st.session_state.total_results / st.session_state.page_size)
+    
+    # Butonlar
+    col1, col2 = st.columns([1,1])
+    with col1:
+        if st.button("Previous") and st.session_state.current_page > 1:
+            st.session_state.current_page -= 1
+    with col2:
+        if st.button("Next") and st.session_state.current_page < total_pages:
+            st.session_state.current_page += 1
 
-st.write(f"Showing page {st.session_state.current_page} of {total_pages}")
+    st.write(f"Showing page {st.session_state.current_page} of {total_pages}")
 
-# ✅ Şu anki sayfadaki verileri göster
-start_idx = (st.session_state.current_page - 1) * st.session_state.page_size
-end_idx = start_idx + st.session_state.page_size
-page_data = st.session_state.all_results[start_idx:end_idx]
+    start_idx = (st.session_state.current_page - 1) * st.session_state.page_size
+    end_idx = start_idx + st.session_state.page_size
+    page_data = st.session_state.all_results[start_idx:end_idx]
 
-if page_data:
-    for i, content in enumerate(page_data, start=start_idx + 1):
-        st.text(f"{i}: {content}")
+    for i, content in enumerate(page_data, start=start_idx+1):
+        st.write(f"{i}: {content}")
 
-# ✅ Tüm sonuçları indir
-if st.session_state.all_results:
-    txt_content = "\n".join(st.session_state.all_results)
-    st.download_button(
-        label="Download All Results",
-        data=txt_content,
-        file_name=f"search_results.txt",
-        mime="text/plain"
-    )
+    # İndirme
+    if st.session_state.all_results:
+        txt_content = "\n".join(st.session_state.all_results)
+        st.download_button("Download All Results", data=txt_content, file_name=f"{query}.txt")
+
