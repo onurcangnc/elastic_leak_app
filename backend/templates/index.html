@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Leak Search Engine</title>
+  <style>
+    body {
+      background-color: #0f0f0f;
+      color: #e0e0e0;
+      font-family: Consolas, monospace;
+      padding: 40px;
+    }
+    h2 {
+      color: #00ff88;
+    }
+    #results {
+      margin-top: 20px;
+      white-space: pre-wrap;
+    }
+    #progress {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #00cc66;
+    }
+    #progress-bar {
+      width: 100%;
+      background-color: #333;
+      height: 6px;
+      border-radius: 5px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    #progress-bar-fill {
+      height: 100%;
+      background-color: #00cc66;
+      width: 0;
+      transition: width 0.3s ease-in-out;
+    }
+    input[type="text"] {
+      width: 400px;
+      padding: 10px;
+      border-radius: 5px;
+      border: none;
+      background-color: #1f1f1f;
+      color: #e0e0e0;
+    }
+    button {
+      padding: 10px 20px;
+      background-color: #00ff88;
+      color: #0f0f0f;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #00cc66;
+    }
+    .controls {
+      margin-top: 20px;
+    }
+    .stats {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #a0a0a0;
+    }
+  </style>
+</head>
+<body>
+  <h2>🔍 Leak Search Engine</h2>
+  <form id="search-form">
+    <input type="text" id="query" placeholder="Search leak content...">
+    <button type="submit">Search</button>
+  </form>
+
+  <div class="stats" id="summary"></div>
+  <div id="progress"></div>
+  <div id="progress-bar"><div id="progress-bar-fill"></div></div>
+
+  <div class="controls">
+    <button onclick="prevPage()">⬅ Geri</button>
+    <button onclick="nextPage()">İleri ➡</button>
+    <button onclick="copyVisible()">📋 Kopyala</button>
+    <input type="text" id="filterInput" placeholder="Sayfa içinde ara..." style="margin-left: 10px;">
+  </div>
+
+  <div id="results"></div>
+
+  <script>
+    const form = document.getElementById('search-form');
+    const queryInput = document.getElementById('query');
+    const filterInput = document.getElementById('filterInput');
+    const resultsDiv = document.getElementById('results');
+    const summaryDiv = document.getElementById('summary');
+    const progressDiv = document.getElementById('progress');
+    const progressFill = document.getElementById('progress-bar-fill');
+    let results = [], filteredResults = [], page = 1, perPage = 10000, currentKeyword = '';
+
+    function renderPage(p) {
+      resultsDiv.innerHTML = '';
+      const list = filteredResults.length ? filteredResults : results;
+      const totalToShow = list.length;
+      const start = (p - 1) * perPage;
+      const end = Math.min(start + perPage, totalToShow);
+      for (let i = start; i < end; i++) {
+        const line = document.createElement('p');
+        line.textContent = list[i];
+        resultsDiv.appendChild(line);
+      }
+      summaryDiv.innerHTML = `🔍 ${list.length.toLocaleString()} sonuç bulundu<br>👁️ Gösterilen: ${start + 1}–${end}`;
+    }
+
+    function applyFilter() {
+      if (!currentKeyword) {
+        filteredResults = [];
+      } else {
+        filteredResults = results.filter(line => line.toLowerCase().includes(currentKeyword));
+      }
+      page = 1;
+      renderPage(page);
+    }
+
+    filterInput.addEventListener('input', () => {
+      currentKeyword = filterInput.value.trim().toLowerCase();
+      applyFilter();
+    });
+
+    function nextPage() {
+      const list = filteredResults.length ? filteredResults : results;
+      if ((page * perPage) < list.length) {
+        page++;
+        renderPage(page);
+      }
+    }
+
+    function prevPage() {
+      if (page > 1) {
+        page--;
+        renderPage(page);
+      }
+    }
+
+    function copyVisible() {
+      const list = filteredResults.length ? filteredResults : results;
+      const start = (page - 1) * perPage;
+      const end = Math.min(start + perPage, list.length);
+      const text = list.slice(start, end).join('\n');
+      navigator.clipboard.writeText(text);
+      alert('Sayfadaki sonuçlar kopyalandı!');
+    }
+
+    form.addEventListener('submit', async (e) => {
+      const startTime = performance.now();
+      e.preventDefault();
+      results = [];
+      filteredResults = [];
+      resultsDiv.innerHTML = '<p>Searching...</p>';
+      summaryDiv.innerHTML = '';
+      progressDiv.textContent = '';
+      progressFill.style.width = '0%';
+      const query = queryInput.value.trim();
+      if (!query) return;
+
+      let response = await fetch('/search_api', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q: query })
+      });
+      let data = await response.json();
+
+      if (data.mode === 'download') {
+        window.location.href = data.download_url;
+      } else if (data.mode === 'paginate') {
+        let next_sort = data.next_sort;
+        results.push(...data.results);
+        applyFilter();
+        let loaded = data.results.length;
+
+        while (next_sort) {
+          const nextResp = await fetch('/search_api', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ q: query, search_after: next_sort })
+          });
+          const nextData = await nextResp.json();
+          if (!nextData.results.length) break;
+          next_sort = nextData.next_sort;
+          results.push(...nextData.results);
+          applyFilter();
+          loaded += nextData.results.length;
+
+          progressDiv.textContent = `📦 Yükleniyor: ${loaded.toLocaleString()} sonuç...`;
+          let percent = Math.min((loaded / 100000) * 100, 100);
+          progressFill.style.width = percent + '%';
+          await new Promise(r => setTimeout(r, 100));
+        }
+
+        renderPage(page);
+        const elapsed = Math.round(performance.now() - startTime);
+        progressDiv.textContent = `✔️ Tüm sonuçlar yüklendi. ⏱ ${elapsed} ms`;
+        progressFill.style.width = '100%';
+      } else if (data.error) {
+        resultsDiv.innerHTML = `<p style=\"color:red;\">Hata: ${data.error}</p>`;
+      }
+    });
+  </script>
+</body>
+</html>
